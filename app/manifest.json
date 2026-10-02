@@ -1,0 +1,9 @@
+{
+  "name": "Truck & Driver Tracker",
+  "short_name": "Trucks",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#F3F2EC",
+  "theme_color": "#14231C",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

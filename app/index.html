@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14231C">
+<title>Truck Driver</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<style>
+:root{--ink:#14231C;--paper:#F3F2EC;--card:#fff;--line:#DAD8CE;--muted:#55605A;--accent:#C2410C;--ok:#1F7A4D}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--paper);color:var(--ink);min-height:100vh}
+main{max-width:480px;margin:0 auto;padding:20px 20px 40px;display:flex;flex-direction:column;gap:16px}
+h1{font-size:28px;margin:8px 0 0}
+label{font-size:14px;color:var(--muted);display:block;margin-bottom:6px}
+select,input{width:100%;height:52px;border:1px solid var(--line);border-radius:12px;padding:0 14px;font-size:17px;background:#fff;color:var(--ink)}
+button{height:54px;border:0;border-radius:14px;font-size:17px;font-weight:600;cursor:pointer;background:var(--accent);color:#fff}
+button.sec{background:#fff;color:var(--ink);border:2px solid var(--ink)}
+button:disabled{opacity:.5}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.dark{background:var(--ink);color:var(--paper);border:0}
+.row{display:flex;gap:10px;align-items:center}
+.pill{padding:4px 10px;border-radius:999px;font-size:13px;font-weight:600;background:#34463D;color:#fff}
+.pill.on{background:var(--ok)} .pill.off{background:#8a2c0d}
+.muted{color:var(--muted);font-size:14px}
+.dark .muted{color:#B9C4BD}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{min-height:44px;height:auto;padding:0 14px;border-radius:999px;font-size:15px;background:#fff;color:var(--ink);border:1px solid var(--line)}
+.chip.sel{background:var(--ink);color:#fff;border-color:var(--ink)}
+.steps{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.steps button{height:48px;font-size:15px;background:#fff;color:var(--ink);border:1px solid var(--line)}
+.steps button.sel{background:var(--ok);color:#fff;border-color:var(--ok)}
+.item{display:flex;justify-content:space-between;font-size:14px;padding:6px 0;border-bottom:1px solid var(--line)}
+.err{color:#9a1c0b;font-size:14px;min-height:18px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <!-- LOGIN -->
+  <section id="login" class="card" hidden>
+    <h1>Driver sign in</h1>
+    <div><label for="drv">Driver</label><select id="drv"></select></div>
+    <div><label for="pin">PIN</label><input id="pin" type="password" inputmode="numeric" autocomplete="off"></div>
+    <div><label for="trk">Truck</label><select id="trk"></select></div>
+    <div class="err" id="loginErr"></div>
+    <button id="loginBtn">Sign in</button>
+  </section>
+
+  <!-- HOME -->
+  <section id="home" hidden>
+    <div class="card dark">
+      <div class="row" style="justify-content:space-between">
+        <div><div class="muted" id="who"></div><div style="font-size:26px;font-weight:700" id="truckLbl"></div></div>
+        <span class="pill off" id="gpsPill">GPS off</span>
+      </div>
+      <div><label for="trip" style="color:#B9C4BD">Trip number</label><input id="trip" placeholder="e.g. T-2291"></div>
+      <button id="trackBtn">Start trip</button>
+      <div class="muted" id="gpsInfo">Keep this app open with the screen on while driving.</div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:700">Status</div>
+      <div class="steps" id="steps"></div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:700">Take photo</div>
+      <div class="chips" id="types"></div>
+      <input id="cam" type="file" accept="image/*" capture="environment" hidden>
+      <button id="shoot">Open camera</button>
+      <div class="muted" id="queueInfo"></div>
+      <div id="recent"></div>
+    </div>
+    <button class="sec" id="logout">Sign out</button>
+  </section>
+</main>
+
+<script src="config.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const store = { get: k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+                set: (k, v) => localStorage.setItem(k, JSON.stringify(v)) };
+const STATUSES = ['Loaded', 'Departed', 'In transit', 'Arrived', 'Delivered', 'Break'];
+const TYPES = ['Delivery note', 'Cargo', 'Damage', 'Odometer'];
+let session = store.get('session');   // {driverId, pin, name, truck}
+let state = { status: 'Idle', type: TYPES[0], tracking: false, pos: null, watch: null, timer: null, wake: null };
+
+/* ---------- API ---------- */
+async function api(body) {
+  const r = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(body) });
+  return r.json();
+}
+const auth = () => ({ driverId: session.driverId, pin: session.pin });
+
+/* ---------- login ---------- */
+async function showLogin() {
+  $('login').hidden = false; $('home').hidden = true;
+  try {
+    const m = await (await fetch(API_URL + '?action=meta')).json();
+    $('drv').innerHTML = m.drivers.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
+    $('trk').innerHTML = m.trucks.map(t => `<option value="${t.id}">${t.id}${t.plate ? ' · ' + t.plate : ''}</option>`).join('');
+  } catch { $('loginErr').textContent = 'Cannot reach server. Check config.js and signal.'; }
+}
+$('loginBtn').onclick = async () => {
+  $('loginErr').textContent = '';
+  const body = { action: 'login', driverId: $('drv').value, pin: $('pin').value };
+  try {
+    const r = await api(body);
+    if (!r.ok) { $('loginErr').textContent = 'Wrong PIN.'; return; }
+    session = { driverId: body.driverId, pin: body.pin, name: r.name, truck: $('trk').value };
+    store.set('session', session); showHome();
+  } catch { $('loginErr').textContent = 'No connection.'; }
+};
+$('logout').onclick = () => { stopTracking(); localStorage.removeItem('session'); session = null; showLogin(); };
+
+/* ---------- home ---------- */
+function showHome() {
+  $('login').hidden = true; $('home').hidden = false;
+  $('who').textContent = session.name; $('truckLbl').textContent = session.truck;
+  $('trip').value = store.get('trip') || '';
+  $('steps').innerHTML = STATUSES.map(s => `<button data-s="${s}">${s}</button>`).join('');
+  $('steps').onclick = e => { const s = e.target.dataset.s; if (s) setStatus(s); };
+  $('types').innerHTML = TYPES.map(t => `<button class="chip" data-t="${t}">${t}</button>`).join('');
+  $('types').onclick = e => { const t = e.target.dataset.t; if (t) { state.type = t; paintTypes(); } };
+  paintTypes(); paintSteps(); refreshQueue();
+}
+const paintTypes = () => document.querySelectorAll('#types .chip').forEach(b => b.classList.toggle('sel', b.dataset.t === state.type));
+const paintSteps = () => document.querySelectorAll('#steps button').forEach(b => b.classList.toggle('sel', b.dataset.s === state.status));
+function setStatus(s) { state.status = s; paintSteps(); sendPing(); }
+
+/* ---------- tracking ---------- */
+$('trackBtn').onclick = () => state.tracking ? stopTracking() : startTracking();
+async function startTracking() {
+  if (!navigator.geolocation) { $('gpsInfo').textContent = 'This phone has no GPS support.'; return; }
+  store.set('trip', $('trip').value.trim());
+  state.tracking = true; if (state.status === 'Idle') setStatusQuiet('Loaded');
+  state.watch = navigator.geolocation.watchPosition(p => {
+    state.pos = { lat: p.coords.latitude, lng: p.coords.longitude, speed: Math.round((p.coords.speed || 0) * 3.6) };
+    $('gpsPill').textContent = 'GPS live'; $('gpsPill').className = 'pill on';
+    $('gpsInfo').textContent = `${state.pos.lat.toFixed(5)}, ${state.pos.lng.toFixed(5)} · ${state.pos.speed} km/h`;
+  }, err => { $('gpsPill').textContent = 'GPS off'; $('gpsPill').className = 'pill off'; $('gpsInfo').textContent = 'Allow location permission.'; },
+  { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+  state.timer = setInterval(sendPing, (window.PING_SECONDS || 10) * 1000);
+  try { state.wake = await navigator.wakeLock.request('screen'); } catch {}
+  $('trackBtn').textContent = 'End trip'; $('trackBtn').className = 'sec';
+}
+function setStatusQuiet(s) { state.status = s; paintSteps(); }
+function stopTracking() {
+  state.tracking = false;
+  if (state.watch != null) navigator.geolocation.clearWatch(state.watch);
+  clearInterval(state.timer); try { state.wake && state.wake.release(); } catch {}
+  $('gpsPill').textContent = 'GPS off'; $('gpsPill').className = 'pill off';
+  $('trackBtn').textContent = 'Start trip'; $('trackBtn').className = '';
+}
+document.addEventListener('visibilitychange', async () => {
+  if (state.tracking && document.visibilityState === 'visible') { try { state.wake = await navigator.wakeLock.request('screen'); } catch {} }
+});
+async function sendPing() {
+  if (!state.tracking || !state.pos || !session) return;
+  try { await api({ action: 'ping', ...auth(), truck: session.truck, trip: $('trip').value.trim(), status: state.status, ...state.pos }); } catch {}
+}
+
+/* ---------- photos + offline queue (IndexedDB) ---------- */
+const db = new Promise((res, rej) => {
+  const r = indexedDB.open('trk', 1);
+  r.onupgradeneeded = () => r.result.createObjectStore('q', { keyPath: 'id', autoIncrement: true });
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+});
+const tx = async (mode, fn) => { const d = await db; return new Promise((res, rej) => { const t = d.transaction('q', mode); const o = fn(t.objectStore('q')); t.oncomplete = () => res(o && o.result); t.onerror = () => rej(t.error); }); };
+
+$('shoot').onclick = () => $('cam').click();
+$('cam').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return; e.target.value = '';
+  const data = await shrink(f);
+  await tx('readwrite', s => s.add({ truck: session.truck, trip: $('trip').value.trim(), type: state.type, ts: Date.now(),
+    lat: state.pos && state.pos.lat, lng: state.pos && state.pos.lng, data }));
+  refreshQueue(); flush();
+};
+function shrink(file) {   // resize to 1600px JPEG ~ 300-600 KB, return base64 (no prefix)
+  return new Promise(res => {
+    const img = new Image(); img.onload = () => {
+      const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = img.width * k; c.height = img.height * k;
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      res(c.toDataURL('image/jpeg', 0.8).split(',')[1]); URL.revokeObjectURL(img.src);
+    }; img.src = URL.createObjectURL(file);
+  });
+}
+let flushing = false;
+async function flush() {
+  if (flushing || !session || !navigator.onLine) return; flushing = true;
+  try {
+    const items = await tx('readonly', s => s.getAll());
+    for (const it of items) {
+      try {
+        const r = await api({ action: 'photo', ...auth(), truck: it.truck, trip: it.trip, type: it.type, ts: it.ts, lat: it.lat, lng: it.lng, mime: 'image/jpeg', data: it.data });
+        if (r.ok) { await tx('readwrite', s => s.delete(it.id)); logRecent(`${it.type} · uploaded`); } else break;
+      } catch { break; }
+    }
+  } finally { flushing = false; refreshQueue(); }
+}
+async function refreshQueue() {
+  const n = (await tx('readonly', s => s.count())) || 0;
+  $('queueInfo').textContent = n ? `${n} photo(s) waiting to upload — will send when signal returns` : 'All photos uploaded';
+}
+function logRecent(t) {
+  const d = document.createElement('div'); d.className = 'item';
+  d.innerHTML = `<span>${t}</span><span class="muted">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>`;
+  $('recent').prepend(d);
+}
+window.addEventListener('online', flush); setInterval(flush, 20000);
+
+/* ---------- boot ---------- */
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+session ? showHome() : showLogin();
+</script>
+</body>
+</html>
